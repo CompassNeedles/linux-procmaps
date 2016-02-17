@@ -266,12 +266,20 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 	struct file *file = vma->vm_file;
 	struct proc_maps_private *priv = m->private;
 	struct task_struct *task = priv->task;
+
 	vm_flags_t flags = vma->vm_flags;
+
 	unsigned long ino = 0;
 	unsigned long long pgoff = 0;
-	unsigned long start, end;
+	unsigned long start, end, write_addr;
+	unsigned int pg_refs = 0;
+	unsigned long long phys = 0;
+
+	struct page *pg;
+
 	dev_t dev = 0;
-	int len;
+	int len, llen = 0;
+	char ref_c;
 	const char *name = NULL;
 
 	if (file) {
@@ -290,14 +298,59 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 		end -= PAGE_SIZE;
 
 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu %n",
-			start,
-			end,
-			flags & VM_READ ? 'r' : '-',
-			flags & VM_WRITE ? 'w' : '-',
-			flags & VM_EXEC ? 'x' : '-',
-			flags & VM_MAYSHARE ? 's' : 'p',
-			pgoff,
-			MAJOR(dev), MINOR(dev), ino, &len);
+		start,
+		end,
+		flags & VM_READ ? 'r' : '-',
+		flags & VM_WRITE ? 'w' : '-',
+		flags & VM_EXEC ? 'x' : '-',
+		flags & VM_MAYSHARE ? 's' : 'p',
+		pgoff,
+		MAJOR(dev), MINOR(dev),
+		ino,
+		&len);
+
+	if (is_pid && vma && !is_vm_hugetlb_page(vma)
+		&& mm && task && mm->pgd) {
+
+		pg = follow_page(vma, start, 0);
+		if (pg && !IS_ERR(pg))
+			phys = PFN_PHYS(page_to_pfn(pg));
+		seq_printf(m, "%016llx-%n", phys, &llen);
+		len += llen;
+		write_addr = start;
+		pg = follow_page(vma, end, 0);
+		if (pg && !IS_ERR(pg))
+			phys = PFN_PHYS(page_to_pfn(pg));
+		else
+			phys = 0ULL;
+		llen = 0;
+		seq_printf(m, "%016llx %n", phys, &llen);
+		len += llen;
+		end -= PAGE_SIZE;
+
+		for ( ; write_addr <= end ; write_addr += PAGE_SIZE) {
+
+			pg = follow_page(vma, write_addr, 0); /* does lots */
+
+			if (pg && !IS_ERR(pg)) {
+				pg_refs = page_mapcount(pg); /* atomic */
+				ref_c = pg_refs > 9 ? 'x' : (char)pg_refs+'0';
+			} else {
+				ref_c = '.';
+			}
+			llen = 0;
+			seq_printf(m, "%c%n", ref_c, &llen);
+			len += llen;
+		}
+
+		llen = 0;
+		seq_printf(m, " %n", &llen);
+		len += llen;
+	} else if (is_pid) { /* print null map, for [vectors] or empty range */
+		llen = 0;
+		seq_printf(m, "%016llx-%016llx %c %n", 0ULL, 0ULL, '\0', &llen);
+		len += llen;
+	}
 
 	/*
 	 * Print the dentry name for named mappings, and a
@@ -309,11 +362,11 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 		goto done;
 	}
 
-	name = arch_vma_name(vma);
+	name = arch_vma_name(vma); /* "[vectors]" or null */
 	if (!name) {
 		pid_t tid;
 
-		if (!mm) {
+		if (!mm) { /* we don't see this anywhere in /proc/<pid>/maps */
 			name = "[vdso]";
 			goto done;
 		}
