@@ -2,3 +2,9 @@ Author: Sami Mourad
 
 Check out the description!
 Details of this implementation become clearer upon browsing through the test files in the test/ folder.
+In particular, page table virtual address and physical address ranges are both provided along with
+a map of references to the page table entries (with a dot '.' marking an uninitialized entry with no
+references, otherwise digits '1'-'9' denoting the number of references to an entry, and symbol '*' for
+entries with greater than 9 references).
+To access this information in the OS's filesystem execute the sequence of commands shown in the .sh
+file in test/.
